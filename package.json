@@ -1,0 +1,17 @@
+{
+  "name": "sony-camera-js",
+  "version": "0.1.0",
+  "description": "",
+  "main": "sony-camera-demo.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Arrian Purcell",
+  "license": "MIT",
+  "dependencies": {
+    "lodash": "^4.16.4",
+    "node-ssdp": "^2.8.0",
+    "request": "^2.75.0",
+    "xml2json": "^0.10.0"
+  }
+}
