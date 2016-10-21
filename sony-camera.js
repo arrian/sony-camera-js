@@ -13,6 +13,10 @@ class Camera {
 
 	constructor() {
 		this.messageCounter = 1;
+
+		this.precondition = {
+			actTakePicture: 'startRecMode'
+		};
 	}
 
 	connect() {
@@ -77,7 +81,7 @@ class Camera {
 		return cameraService['av:X_ScalarWebAPI_ActionList_URL'] + '/camera';
 	}
 
-	send(method, params) {
+	send(method, params = []) {
 		return new Promise((resolve, reject) => {
 			var data = {
 				method: method,
@@ -119,31 +123,69 @@ class Camera {
 		});
 	}
 
-	picture() {
-		return this.send('actTakePicture', []);
-	}
-
 	api() {
-		return this.send('getAvailableApiList', []);
+		return this.send('getAvailableApiList').then(message => message.result[0]);
 	}
 
-	versions() {
-		return this.send('getVersions', []);
+	call(method, params) {
+		return this.api()
+		.then(api => {
+			if(!_.includes(api, method)) {
+				if(!this.precondition[method]) throw new Error(`'${method}' is not available and the calls required to make it available are not known`);
+				return this.call(this.precondition[method]).then(Camera.delay(3000));
+			}
+		})
+		.then(() => this.send(method, params))
+		.catch((error) => console.log(`Error while calling ${method}: ${error}`));
+	}
+
+	picture() {
+		return this.call('actTakePicture');
+	}
+
+	// API Methods
+
+	actTakePicture() {
+		return this.picture();
+	}
+
+	getVersions() {
+		return this.call('getVersions');
 	}
 
 	startRecMode() {
-		return this.send('startRecMode', []);
+		return this.call('startRecMode');
 	}
 
 	stopRecMode() {
-		return this.send('stopRecMode', []);
+		return this.call('stopRecMode');
 	}
 
+	// Advanced
+
+	timelapseFrame(i, count, interval, result = []) {
+		if(i >= count) return result;
+
+		console.log(`timelapse ${i + 1} of ${count}`);
+
+		return this.picture().then(Camera.delay(interval)).then(frame => {
+			result.push(frame);
+			return this.timelapseFrame(i + 1, count, interval, result);
+		});
+	}
+
+	timelapse(count, interval) {
+		if(count <= 1) throw new Error('Too few timelapse frames. Timelapse requires two or more frames.');
+		return this.timelapseFrame(0, count, interval);
+	}
+
+	// Static Helpers
+
 	static delay(duration) {
-		return function(){
+		return function(value){
 			return new Promise(function(resolve, reject){
 				setTimeout(function(){
-					resolve();
+					resolve(value);
 				}, duration)
 			});
 		};
@@ -155,29 +197,29 @@ class Camera {
 }
 
 // 'getVersions',
-//        'getMethodTypes',
-//        'getApplicationInfo',
-//        'getAvailableApiList',
-//        'getEvent',
-//        'actTakePicture',
-//        'stopRecMode',
-//        'startLiveview',
-//        'stopLiveview',
-//        'actZoom',
-//        'awaitTakePicture',
-//        'setSelfTimer',
-//        'getSelfTimer',
-//        'getAvailableSelfTimer',
-//        'getSupportedSelfTimer',
-//        'setExposureCompensation',
-//        'getExposureCompensation',
-//        'getAvailableExposureCompensation',
-//        'getSupportedExposureCompensation',
-//        'setShootMode',
-//        'getShootMode',
-//        'getAvailableShootMode',
-//        'getSupportedShootMode',
-//        'getSupportedFlashMode'
+// 'getMethodTypes',
+// 'getApplicationInfo',
+// 'getAvailableApiList',
+// 'getEvent',
+// 'actTakePicture',
+// 'stopRecMode',
+// 'startLiveview',
+// 'stopLiveview',
+// 'actZoom',
+// 'awaitTakePicture',
+// 'setSelfTimer',
+// 'getSelfTimer',
+// 'getAvailableSelfTimer',
+// 'getSupportedSelfTimer',
+// 'setExposureCompensation',
+// 'getExposureCompensation',
+// 'getAvailableExposureCompensation',
+// 'getSupportedExposureCompensation',
+// 'setShootMode',
+// 'getShootMode',
+// 'getAvailableShootMode',
+// 'getSupportedShootMode',
+// 'getSupportedFlashMode'
 
 module.exports = {
 	Camera: Camera
