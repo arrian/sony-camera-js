@@ -7,24 +7,40 @@ var _ = require('lodash');
 
 var SONY_API = 'schemas-sony-com:service:ScalarWebAPI:1',
 	SSDP_ADDRESS = '239.255.255.250',
-	SSDP_PORT = 1900;
+	SSDP_PORT = 1900,
+	VERSION = '1.0',
+
+	// Some standard api calls
+	GET_AVAILABLE_API = 'getAvailableApiList',
+	GET_METHOD_TYPES = 'getMethodTypes',
+	START_REC_MODE = 'startRecMode',
+	ACT_TAKE_PICTURE = 'actTakePicture',
+
+	Validator = {
+		double: _.isNumber,
+		string: _.isString,
+		bool: _.isBoolean,
+		int: _.isInteger
+	};
 
 class Camera {
 
 	constructor() {
 		this.messageCounter = 1;
+		this.connecting = true;
 
-		this.precondition = {
-			actTakePicture: 'startRecMode'
-		};
+		this.precondition = {};
+		this.precondition[ACT_TAKE_PICTURE] = START_REC_MODE;
 	}
 
 	connect() {
-		this.searching = true;
-		return this.getLocation().then((location) => {
+		console.log(`Connecting...`);
+		return this.getLocation()
+		.then(location => {
 			this.location = location;
 			return this.getSpecification(location);
-		}).then((specification) => {
+		})
+		.then(specification => {
 			this.specification = specification;
 
 			var urlObject = url.parse(this.getURL(specification));
@@ -32,31 +48,47 @@ class Camera {
 			this.host = urlObject.hostname;
 			this.port = urlObject.port;
 			this.path = urlObject.path;
+		})
+		.then(() => this.send(GET_METHOD_TYPES, [VERSION]))
+		.then(methods => {
+			this.setAPI(methods);
+			this.connecting = false;
 
-			this.searching = false;
+			console.log(`Connected to ${this.host}`);
+		})
+		.catch(error => {
+			console.log(`An error occurred while connecting: ${error}`);
+			throw error;
 		});
+	}
+
+	isConnected() {
+		return !this.connecting;
 	}
 
 	getLocation() {
 		return new Promise(function(resolve, reject) {
-			var discoverMessage = new Buffer(
-				'M-SEARCH * HTTP/1.1\r\n' +
-				`HOST:${SSDP_ADDRESS}:${SSDP_PORT}\r\n` +
-				'MAN:"ssdp:discover"\r\n' +
-				`ST:urn:${SONY_API}\r\n` +
-				'MX:1\r\n' +
-				'\r\n'
-			);
+			try {
+				var discoverMessage = new Buffer(
+					'M-SEARCH * HTTP/1.1\r\n' +
+					`HOST:${SSDP_ADDRESS}:${SSDP_PORT}\r\n` +
+					'MAN:"ssdp:discover"\r\n' +
+					`ST:urn:${SONY_API}\r\n` +
+					'MX:1\r\n' +
+					'\r\n'
+				);
 
-			var client = dgram.createSocket('udp4');
+				var client = dgram.createSocket('udp4');
 
-			client.on('message', (message, remote) => {
-				var location = /LOCATION: (.*)/.exec(message)[1];
-				console.log(remote.address + ':' + remote.port +' - ' + message);
-				resolve(location);
-			});
+				client.on('message', (message, remote) => {
+					var location = /LOCATION: (.*)/.exec(message)[1];
+					resolve(location);
+				});
 
-			client.send(discoverMessage, 0, discoverMessage.length, SSDP_PORT, SSDP_ADDRESS);
+				client.send(discoverMessage, 0, discoverMessage.length, SSDP_PORT, SSDP_ADDRESS);
+			} catch(error) {
+				reject(error);
+			}  
 		});
 	}
 
@@ -65,7 +97,6 @@ class Camera {
 			request.get(location, function (error, response, body) {
 				if (!error && response.statusCode == 200) {
 					var spec = xmltojson.toJson(body, { object: true });
-					console.log(JSON.stringify(spec, null, 2));
 					resolve(spec);
 				} else {
 					reject(error);
@@ -83,55 +114,106 @@ class Camera {
 
 	send(method, params = []) {
 		return new Promise((resolve, reject) => {
-			var data = {
-				method: method,
-				params: params,
-				id: this.messageCounter++,
-				version: '1.0'
-			};
+			try {
+				var data = {
+					method: method,
+					params: params,
+					id: this.messageCounter++,
+					version: VERSION
+				};
 
-			var dataString = JSON.stringify(data);
+				var dataString = JSON.stringify(data);
 
-			var options = {
-				host: this.host,
-				port: this.port,
-				path: this.path,
-				method: 'POST',
-				headers: {
-					'Content-Type': 'application/json',
-					'Content-Length': dataString.length
-				}
-			};
+				var options = {
+					host: this.host,
+					port: this.port,
+					path: this.path,
+					method: 'POST',
+					headers: {
+						'Content-Type': 'application/json',
+						'Content-Length': dataString.length
+					}
+				};
 
-			var req = http.request(options, function(res) {
-				res.setEncoding('utf-8');
+				var req = http.request(options, function(res) {
+					res.setEncoding('utf-8');
 
-				var response = '';
+					var response = '';
 
-				res.on('data', function(data) {
-					response += data;
+					res.on('data', function(data) {
+						response += data;
+					});
+
+					res.on('end', function() {
+						var result = JSON.parse(response);
+						result = result.result || result.results;
+						resolve(result);
+					});
 				});
 
-				res.on('end', function() {
-					var result = JSON.parse(response);
-					resolve(result);
-				});
-			});
-
-			req.write(dataString);
-			req.end();
+				req.write(dataString);
+				req.end();
+			} catch(error) {
+				reject(error);
+			}
 		});
 	}
 
-	api() {
-		return this.send('getAvailableApiList').then(message => message.result[0]);
+	getAPI() {
+		this.validateConnected();
+		return this.api;
+	}
+
+	getAvailableAPI() {
+		this.validateConnected();
+		return this.send(GET_AVAILABLE_API).then(result => result[0]);
+	}
+
+	setAPI(methods) {
+		var createMethod = (name, expectedParameters) => {
+				return (...givenParameters) => {
+					this.validateParameters(givenParameters, expectedParameters);
+					return this.call(name, givenParameters);
+				};
+			},
+			name,
+			expectedParameters,
+			returns;
+
+		this.api = _.map(methods, method => `${method[0]}(${method[1]}) -> ${method[2]}`);
+
+		_.each(methods, method => {
+			this[method[0]] = createMethod(method[0], method[1]);
+		});
+	}
+
+	validateParameters(givenParameters, expectedParameters) {
+		if(givenParameters.length < expectedParameters.length) {
+			throw new Error(`Too few parameters provided. ${expectedParameters.length} were expected but ${givenParameters.length} were given.`);
+		} 
+
+		if(givenParameters.length > expectedParameters.length) {
+			throw new Error(`Too many parameters provided. ${expectedParameters.length} were expected but ${givenParameters.length} were given.`);
+		}
+
+		_.forEach(_.zip(givenParameters, expectedParameters), _.spread((given, expected) => {
+			if(Validator[expected] && !Validator[expected](given)) {
+				throw new Error(`Argument with value ${given} must be of type ${expected}`);
+			}
+		}));
+	}
+
+	validateConnected() {
+		if(!this.isConnected()) {
+			throw new Error('Camera not yet connected.');
+		}
 	}
 
 	call(method, params) {
-		return this.api()
+		return this.getAvailableAPI()
 		.then(api => {
 			if(!_.includes(api, method)) {
-				if(!this.precondition[method]) throw new Error(`'${method}' is not available and the calls required to make it available are not known`);
+				if(!this.precondition[method]) throw new Error(`The '${method}' call is not currently available and the calls required to make it available are not known`);
 				return this.call(this.precondition[method]).then(Camera.delay(3000));
 			}
 		})
@@ -140,25 +222,8 @@ class Camera {
 	}
 
 	picture() {
-		return this.call('actTakePicture');
-	}
-
-	// API Methods
-
-	actTakePicture() {
-		return this.picture();
-	}
-
-	getVersions() {
-		return this.call('getVersions');
-	}
-
-	startRecMode() {
-		return this.call('startRecMode');
-	}
-
-	stopRecMode() {
-		return this.call('stopRecMode');
+		this.validateConnected();
+		return this.send(ACT_TAKE_PICTURE);
 	}
 
 	// Advanced
@@ -195,31 +260,6 @@ class Camera {
 		console.log(JSON.stringify(result, null, 2));
 	}
 }
-
-// 'getVersions',
-// 'getMethodTypes',
-// 'getApplicationInfo',
-// 'getAvailableApiList',
-// 'getEvent',
-// 'actTakePicture',
-// 'stopRecMode',
-// 'startLiveview',
-// 'stopLiveview',
-// 'actZoom',
-// 'awaitTakePicture',
-// 'setSelfTimer',
-// 'getSelfTimer',
-// 'getAvailableSelfTimer',
-// 'getSupportedSelfTimer',
-// 'setExposureCompensation',
-// 'getExposureCompensation',
-// 'getAvailableExposureCompensation',
-// 'getSupportedExposureCompensation',
-// 'setShootMode',
-// 'getShootMode',
-// 'getAvailableShootMode',
-// 'getSupportedShootMode',
-// 'getSupportedFlashMode'
 
 module.exports = {
 	Camera: Camera

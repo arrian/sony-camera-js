@@ -43,7 +43,9 @@ var Camera = require('./sony-camera').Camera,
 	camera = new Camera();
 
 camera.connect()
-.then(() => camera.api())
+.then(() => camera.getAvailableAPI())
 .then(Camera.display);
 
 ```
+
+
